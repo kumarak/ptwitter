@@ -1,5 +1,8 @@
 from __future__ import print_function
 
+CONSUMER_KEY = 'uS6hO2sV6tDKIOeVjhnFnQ'
+CONSUMER_SECRET = 'MEYTOS97VvlHX7K1rwHPEqVpTSqZ71HtvoK4sVuYk'
+
 import sys
 import time
 import os.path
@@ -9,7 +12,10 @@ try:
 except ImportError:
 	from configparser import ConfigParser as SafeConfigParser
 
-import ansi	
+
+import ansi
+from api import Twitter, TwitterError
+from oauth import OAuth, write_token_file, read_token_file	
 
 OPTIONS = {
 	'action': 'friends',
@@ -28,8 +34,73 @@ OPTIONS = {
 	'force-ansi': False,
 }
 
+
+
+
 def parse_args(args, options):
 	pass
+
+class Action(object):
+	def ask(self, subject='perform this action', careful=False):
+		pass
+	def __call__(self, twitter, options):
+		action = actions.get(options['action'], NoSuchAction)()
+		try:
+			doAction = lambda : action(twitter, options)
+			if(options['refresh'] and isinstance(action, StatusAction)):
+				while True:
+					doAction()
+					sys.stdout.flush()
+					time.sleep(options['refresh_rate'])
+			else:
+				doAction()
+			print(doAction)
+		except KeyboardInterrupt:
+			print('\n[Keyboard Interrupt]', file=sys.stderr)
+			pass		
+		print("inside action call")
+		pass
+
+
+class NoSuchActionError(Exception):
+    pass
+
+class NoSuchAction(Action):
+    def __call__(self, twitter, options):
+        raise NoSuchActionError("No such action: %s" % (options['action']))
+
+
+class StatusAction(Action):
+	def __call__(self, twitter, options):
+		pass
+
+class AdminAction(Action):
+	def __call__(self, twitter, options):
+		pass
+
+class ListsAction(StatusAction):
+	def getStatuses(self, twitter, options):
+		if not options['extra_args']:
+			raise TwitterError("Please Provide a user to query for lists")
+
+class FriendsAction(StatusAction):
+	def getStatuses(self, twitter, options):
+		return reversed(twitter.statuses.friends_timeline(count=options["length"]))
+
+class FollowAction(AdminAction):
+	def getUser(self, twitter, user):
+		return twitter.friendships.create(id=user)
+
+class DoNothingAction(Action):
+	def __call__(self, twitter, options):
+		print("inside DoNothingAction")
+		pass
+actions = {
+	'authorize' : DoNothingAction,
+	'follow'    : FollowAction,
+	'friends'   : FriendsAction,
+	'list'      : ListsAction,
+}
 
 def loadConfig(filename):
 	options = dict(OPTIONS)
@@ -62,14 +133,14 @@ def main(args=sys.argv[1:]):
 	# check why config path is None
 	print(config_path)
 	config_options = loadConfig(config_path)
-	print(config_options)
+	#print(config_options)
 	
 	options = dict(OPTIONS)
 	for d in config_options, arg_options:
 		for k, v in list(d.items()):
 			if v: options[k] = v
 
-	print(options)
+	#print(options)
 	
 	if options['refresh'] and options['action'] not in ('friends', 'public', 'replies'):
 		print("You can only refresh the friends, public, or replies action.", file=sys.stderr)
@@ -85,5 +156,20 @@ def main(args=sys.argv[1:]):
 
 	global ansiFormatter
 	ansiFormatter = ansi.AnsiCmd(options['force-ansi'])
+	
+	oauth_token, oauth_token_secret = read_token_file(oauth_filename)
+
+	twitter = Twitter(
+			auth=OAuth(oauth_token, oauth_token_secret, CONSUMER_KEY, CONSUMER_SECRET), secure=options['secure'], api_version='1', domain='api.twitter.com')
+
+	try:
+		Action()(twitter, options)
+#	except NoSuchActionError as e:
+#		print(e, file=sys.stderr)
+#		raise SystemExit(1)
+	except TwitterError as e:
+		print(str(e), file=sys.stderr)
+		print("Use 'twitter -h' for help", file=sys.stderr)
+		raise SystemExit(1)
 
 	print("twitter called inside main")
